@@ -2,7 +2,7 @@
 require 'uri/generic'
 
 module URI
-  class NI < ::URI::Generic
+  class NI < Generic
     VERSION = "0.1.0"
   end
 
