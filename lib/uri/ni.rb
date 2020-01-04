@@ -4,6 +4,7 @@ require 'uri/generic'
 
 require 'digest'
 require 'base64'
+require 'stringio'
 
 class URI::NI < URI::Generic
   private
@@ -12,10 +13,16 @@ class URI::NI < URI::Generic
   AUTHORITY = "(#{URI::PATTERN::USERINFO}@)?(#{URI::PATTERN::HOST})?" \
     "(?::(#{URI::PATTERN::PORT}))?".freeze
 
+  AUTH_RE = /^#{AUTHORITY}$/o.freeze
+  HOST_RE = /^#{URI::PATTERN::HOST}?$/o.freeze
+
   # this is slightly more relaxed than rfc 6920, allowing for an empty
   # value for the digest such that we can initialize ni:///algo and compute
   ALG_VAL = "([#{URI::PATTERN::UNRESERVED}]+)" \
     "(?:;([#{URI::PATTERN::UNRESERVED}]*))?".freeze
+
+  PATH    = "/#{ALG_VAL}".freeze
+  PATH_RE = /^(?:#{PATH})?$/o.freeze
 
   # put it together
   PATTERN =
@@ -27,6 +34,15 @@ class URI::NI < URI::Generic
   # map these onto upstream properties
   COMPONENT = %i[scheme userinfo host port path query]
 
+  DIGESTS = {
+    "md5":     Digest::MD5,
+    "rmd-160": Digest::RMD160,
+    "sha-1":   Digest::SHA1,
+    "sha-256": Digest::SHA256,
+    "sha-384": Digest::SHA384,
+    "sha-512": Digest::SHA512,
+  }
+
   # resolve first against digest length and then class
   DIGEST_REV = {
     64 => { Digest::SHA512 => :"sha-512", Digest::SHA2   => :"sha-512" },
@@ -36,7 +52,36 @@ class URI::NI < URI::Generic
     16 => { Digest::MD5    => :md5 },
   }
 
+  def algo_for ctx, algo = nil
+    raise NotImplementedError, "Unknown digest type #{ctx.class}" unless
+      d = DIGEST_REV[ctx.digest_length] and d[ctx.class]
+    raise ArgumentError,
+      "algorithm #{algo} does not match digest type #{ctx.class}" if
+      algo and algo != d[ctx.class]
+    d[ctx.class]
+  end
+
   def raw_digest
+    PATH_RE.match(path).captures[1] || ''
+  end
+
+  protected
+
+  # holy crap you can override these?
+
+  # our host can be an empty string
+  def check_host host
+    !!HOST_RE.match(host)
+  end
+
+  # our path has constraints
+  def check_path path
+    !!PATH_RE.match(path)
+  end
+
+  # make sure the host is always set to the empty string
+  def set_host v
+    @host = v.to_s
   end
 
   public
@@ -46,23 +91,75 @@ class URI::NI < URI::Generic
   # @param algorithm [Symbol] See algorithms
   def self.compute data = nil, algorithm: :"sha-256", blocksize: 65536,
       authority: nil, query: nil, &block
-    args = { scheme: 'ni', path: "/#{algorithm}", query: query }
-    obj  = build args
-    return obj.compute data unless block_given?
-    obj.compute(&block)
+
+    build({ scheme: 'ni' }).compute data, algorithm: algorithm,
+      blocksize: blocksize, authority: authority, query: query, &block
   end
 
-  def compute data = nil, algorithm: :"sha-256", blocksize: 65536,
+  def compute data = nil, algorithm: nil, blocksize: 65536,
       authority: nil, query: nil, &block
-    # data can be a digest 
-  end
 
-  def self.build args
-    tmp = URI::Util.make_components_hash self, args
-    super tmp
+    # enforce block size
+    raise ArgumentError,
+      "Blocksize must be an integer >0, not #{blocksize}" unless
+      blocksize.is_a? Integer and blocksize > 0
+
+    # special case for when the data is a digest
+    ctx = nil
+    if data.is_a? Digest::Instance
+      algorithm ||= algo_for data, algorithm
+      ctx  = data
+      data = nil # unset data
+    else
+      # make sure we're all on the same page hurr
+      self.algorithm = algorithm ||= self.algorithmq
+      raise ArgumentError,
+        "#{algorithm} is not a supported digest algorithm." unless
+        ctx = DIGESTS[algorithm]
+      ctx = ctx.new
+    end
+
+    # deal with authority component
+    if authm = AUTH_RE.match(authority.to_s)
+      userinfo, host, port = authm.captures
+      set_userinfo userinfo
+      set_host     host.to_s
+      set_port     port
+    end
+
+    # coerce data to something non-null
+    data = data.to_s if (data.class.ancestors & [String, IO]).empty?
+    if data.respond_to? :empty and data.empty?
+      block.call ctx, nil if block
+    else
+      data = StringIO.new data unless data.is_a? IO
+
+      # give us a default block
+      block ||= -> x, y { x << y } # unless block_given?
+
+      while buf = data.read(blocksize)
+        block.call ctx, buf
+      end
+    end
+
+    self.set_path("/#{algorithm};" +
+      ctx.base64digest.gsub(/[+\/]/, ?+ => ?-, ?/ => ?_).gsub(/=/, ''))
+
+    self
   end
 
   def algorithm
+    m = PATH_RE.match(path) or raise "Path #{path} does not match constraint"
+    algo = m.captures.first
+    return algo.to_sym if algo
+  end
+
+  def algorithm= algo
+    m = PATH_RE.match(path) or raise "Path #{path} does not match constraint"
+    a, b = m.captures
+    self.path   = "/#{algo}"
+    self.digest = b if b
+    a
   end
 
   # Return the digest in the hash. Optionally takes a +radix:+
@@ -78,7 +175,37 @@ class URI::NI < URI::Generic
   # @param alt [false, true] Return the alternative representation
   # @return [String]
   #
-  def digest radix: 256
+  def digest radix: 256, alt: false
+    case radix
+    when 256
+      # XXX do not use urlsafe_decode64; it will complain if the
+      # thingies aren't aligned
+      Base64.decode64(raw_digest.tr('-_', '+/'))
+    when 64
+      b64digest alt: alt
+    when 32
+      b32digest alt: alt
+    when 16
+      hexdigest alt: alt
+    else
+      raise ArgumentError, "Radix must be 16, 32, 64, 256, not #{radix}"
+    end
+  end
+
+  def digest= data
+    case data
+    when Digest::Instance
+      compute data
+    when String
+      m = PATH_RE.match(path) or raise "Path #{path} does not match constraint"
+      a, _ = m.captures
+      self.path = a ? "/#{a};#{data}" : "/;#{data}"
+    else
+      raise ArgumentError,
+        "Data must be a string or Digest::Instance, not #{data.class}"
+    end
+
+    data
   end
 
   # Return the digest in its hexadecimal notation. Optionally give
@@ -89,6 +216,9 @@ class URI::NI < URI::Generic
   # @return [String]
   #
   def hexdigest alt: false
+    str = digest.unpack('H*').first
+    return str.upcase if alt
+    str
   end
 
   # Return the digest in its base32 notation. Optionally give
@@ -99,7 +229,10 @@ class URI::NI < URI::Generic
   # @return [String]
   #
   def b32digest alt: false
-    require_once 'base32'
+    require 'base32'
+    ret = Base32.encode(digest).gsub(/=+/, '')
+    return ret.downcase if alt
+    ret.upcase
   end
 
   # Return the digest in its base64 notation. Optionally give
@@ -110,6 +243,9 @@ class URI::NI < URI::Generic
   # @return [String]
   #
   def b64digest alt: false
+    ret = raw_digest
+    return ret.gsub(/[-_]/, ?- => ?+, ?_ => ?/) unless alt
+    ret
   end
 
   # Returns a +/.well-known/...+, either HTTPS or HTTP URL, given the
@@ -120,6 +256,9 @@ class URI::NI < URI::Generic
   # @return [URI::HTTPS, URI::HTTP]
   #
   def to_www https: true, authority: nil
+    u = userinfo
+    h = host
+    p = port
   end
 
   # Unconditionally returns an HTTPS URL.
@@ -140,6 +279,5 @@ class URI::NI < URI::Generic
   def to_http authority: nil
     to_www https: false, authority: authority
   end
-
 
 end

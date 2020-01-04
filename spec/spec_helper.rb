@@ -1,4 +1,4 @@
-require "bundler/setup"
+#require "bundler/setup"
 require "uri/ni"
 
 RSpec.configure do |config|
