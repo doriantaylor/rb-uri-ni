@@ -21,7 +21,7 @@ class URI::NI < URI::Generic
   ALG_VAL = "([#{URI::PATTERN::UNRESERVED}]+)" \
     "(?:;([#{URI::PATTERN::UNRESERVED}]*))?".freeze
 
-  PATH    = "/#{ALG_VAL}".freeze
+  PATH    = "/(?:#{ALG_VAL})?".freeze
   PATH_RE = /^(?:#{PATH})?$/o.freeze
 
   # put it together
@@ -63,6 +63,20 @@ class URI::NI < URI::Generic
 
   def raw_digest
     PATH_RE.match(path).captures[1] || ''
+  end
+
+  def assert_authority authority = nil
+    authority ||= self.authority
+    m = AUTH_RE.match(authority) or raise ArgumentError,
+      "Invalid authority #{authority}"
+    m.captures
+  end
+
+  def assert_path path = nil
+    path ||= self.path
+    m = PATH_RE.match(path) or raise ArgumentError,
+      "Path #{path} does not match constraint"
+    m.captures
   end
 
   protected
@@ -112,7 +126,7 @@ class URI::NI < URI::Generic
       data = nil # unset data
     else
       # make sure we're all on the same page hurr
-      self.algorithm = algorithm ||= self.algorithmq
+      self.algorithm = algorithm ||= self.algorithm
       raise ArgumentError,
         "#{algorithm} is not a supported digest algorithm." unless
         ctx = DIGESTS[algorithm]
@@ -128,10 +142,8 @@ class URI::NI < URI::Generic
     end
 
     # coerce data to something non-null
-    data = data.to_s if (data.class.ancestors & [String, IO]).empty?
-    if data.respond_to? :empty and data.empty?
-      block.call ctx, nil if block
-    else
+    data = data.to_s if (data.class.ancestors & [String, IO, NilClass]).empty?
+    if data
       data = StringIO.new data unless data.is_a? IO
 
       # give us a default block
@@ -140,6 +152,8 @@ class URI::NI < URI::Generic
       while buf = data.read(blocksize)
         block.call ctx, buf
       end
+    elsif block
+      block.call ctx, nil
     end
 
     self.set_path("/#{algorithm};" +
@@ -148,18 +162,51 @@ class URI::NI < URI::Generic
     self
   end
 
+  # Display the available algorithms.
+  #
+  # @return [Array] containing the symbols representing the available
+  #  digest algorithms.
+  def self.algorithms
+    DIGESTS.keys.sort
+  end
+
+  # Obtain the algorithm of the digest. May be nil.
+  #
+  # @return [Symbol, nil]
   def algorithm
-    m = PATH_RE.match(path) or raise "Path #{path} does not match constraint"
-    algo = m.captures.first
+    algo = assert_path.first
     return algo.to_sym if algo
   end
 
+  # Set the algorithm of the digest. Will croak if the path is malformed.
+  #
+  # @return [Symbol, nil] the old algorithm
   def algorithm= algo
-    m = PATH_RE.match(path) or raise "Path #{path} does not match constraint"
-    a, b = m.captures
+    a, b = assert_path
     self.path   = "/#{algo}"
     self.digest = b if b
-    a
+    a.to_sym if a
+  end
+
+  # Obtain the authority (userinfo@host:port) if present.
+  #
+  # @return [String, nil] the authority
+  def authority
+    out = userinfo ? "#{userinfo}@#{host}" : host
+    out += "#{out}:#{port}" if port
+    out
+  end
+
+  # Set the authority of the URI.
+  #
+  # @return [String, nil] the old authority
+  def authority= authority
+    old = self.authority
+    u, h, p = assert_authority authority unless authority.nil?
+    set_userinfo u
+    set_host     h
+    set_port     p
+    old
   end
 
   # Return the digest in the hash. Optionally takes a +radix:+
@@ -173,7 +220,7 @@ class URI::NI < URI::Generic
   #
   # @param radix [256, 64, 32, 16] The radix of the representation
   # @param alt [false, true] Return the alternative representation
-  # @return [String]
+  # @return [String] The digest of the URI in the given representation
   #
   def digest radix: 256, alt: false
     case radix
@@ -192,14 +239,24 @@ class URI::NI < URI::Generic
     end
   end
 
+  # Set the digest to the data. Data may either be a
+  # +Digest::Instance+ or a base64 string. String representations will
+  # be normalized to {https://tools.ietf.org/html/rfc3548#section-4
+  # RFC 3548} base64url, i.e. +\+/+ will be replaced with +-_+ and
+  # padding (+=+) will be removed. +Digest::Instance+ objects will
+  # just be run through #compute, with all that entails.
   def digest= data
+    a = assert_path.first
     case data
     when Digest::Instance
       compute data
     when String
-      m = PATH_RE.match(path) or raise "Path #{path} does not match constraint"
-      a, _ = m.captures
+      raise ArgumentError, "Data #{data} is not in base64" unless
+        /^[0-9A-Za-z+\/_-]*=*$/.match(data)
+      data = data.tr('+/', '-_').tr('=', '')
       self.path = a ? "/#{a};#{data}" : "/;#{data}"
+    when nil
+      self.path = a ? "/#{a}" : ?/
     else
       raise ArgumentError,
         "Data must be a string or Digest::Instance, not #{data.class}"
@@ -213,7 +270,7 @@ class URI::NI < URI::Generic
   # representation.
   #
   # @param alt [false, true] Return the alternative representation
-  # @return [String]
+  # @return [String] The hexadecimal digest
   #
   def hexdigest alt: false
     str = digest.unpack('H*').first
@@ -226,7 +283,7 @@ class URI::NI < URI::Generic
   # representation. Note this method requires
   #
   # @param alt [false, true] Return the alternative representation
-  # @return [String]
+  # @return [String] The base32 digest
   #
   def b32digest alt: false
     require 'base32'
@@ -236,11 +293,11 @@ class URI::NI < URI::Generic
   end
 
   # Return the digest in its base64 notation. Optionally give
-  # +alt:+ a truthy value to return an alternate (uppercase)
+  # +alt:+ a truthy value to return an alternate (URL-safe)
   # representation.
   #
   # @param alt [false, true] Return the alternative representation
-  # @return [String]
+  # @return [String] The base64 digest
   #
   def b64digest alt: false
     ret = raw_digest
@@ -252,13 +309,47 @@ class URI::NI < URI::Generic
   # contents of the +ni:+ URI.
   #
   # @param authority [#to_s, URI] Override the authority part of the URI
-  # @param https [true, false] whether the URL is HTTPS.
+  # @param https [true, false] whether the URL is to be HTTPS.
   # @return [URI::HTTPS, URI::HTTP]
   #
   def to_www https: true, authority: nil
-    u = userinfo
-    h = host
-    p = port
+    a, d = assert_path
+    components = {
+      scheme:   "http#{https ? ?s : ''}",
+      userinfo: userinfo,
+      host:     host,
+      port:     port,
+      path:     "/.well-known/ni/#{a}/#{d}",
+      query:    query,
+      fragment: fragment,
+    }
+
+    if authority
+      uhp = []
+      if authority.is_a? URI
+        raise ArgumentError, "Bad authority #{authority}" unless
+          %i[userinfo host port].all? {|c| authority.respond_to? c }
+        uhp = [authority.userinfo, authority.host, authority.port]
+        uhp[2] = nil if authority.port == authority.class::DEFAULT_PORT
+      else
+        authority = authority.to_s
+        uhp = AUTH_RE.match(authority) or raise ArgumentError,
+          "Invalid authority #{authority}"
+        uhp = uhp.captures
+      end
+      components[:userinfo] = uhp[0]
+      components[:host]     = uhp[1]
+      components[:port]     = uhp[2]
+    end
+
+    # pick the class
+    cls = https ? URI::HTTPS : URI::HTTP
+
+    # `normalize` should do this but doesn't
+    components[:port] = nil if
+      components[:port] and components[:port] == cls::DEFAULT_PORT
+
+    cls.build(components).normalize
   end
 
   # Unconditionally returns an HTTPS URL.
