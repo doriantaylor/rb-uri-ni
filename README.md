@@ -48,20 +48,28 @@ result and compute a new digest with it:
 ni
 # => #<URI::NI ni:///lol;wut>
 ni.compute 'derp'
-# ArgumentError: lol is not a supported digest algorithm.
+# URI::InvalidComponentError: Can't resolve a Digest context for the algorithm lol.
 ```
 
-Similarly, the digest component of the URI can be anything going in to
-the parser, but only base64 is valid for subsequent manipulation:
+The purpose of this configuration is so that the parser doesn't croak
+on unexpected input, but otherwise assumes you know what you're
+doing. As such, there is no attempt to measure or otherwise divine the
+representation of any updates to the `digest` component:
 
-```
-ni.digest = '$#!%$%'
-# ArgumentError: Data $#!%$% is not in base64
+```ruby
+ni = URI::NI.compute 'some data'
+# => #<URI::NI ni:///sha-256;EweZDmulyhRes16ZGCqb7EZTG8VN32VqYCx4D6AkDe4>
+ni.digest = 'whatever'
+# => "whatever"
+ni
+# => #<URI::NI ni:///sha-256;d2hhdGV2ZXI>
 ```
 
 In addition to computing new digest URIs, this module will return the
 interesting part of its contents in binary, hexadecimal, base64, and
 (with a soft dependency), [base32](https://rubygems.org/gems/base32).
+There are accessors and mutators for `digest`, `hexdigest`,
+`b32digest`, and `b64digest`.
 
 Finally, this module will also reuse any extant `Digest::Instance`
 object as long as it is in the inventory, and furthermore the

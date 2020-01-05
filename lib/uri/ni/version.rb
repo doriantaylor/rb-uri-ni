@@ -3,7 +3,7 @@ require 'uri/generic'
 
 module URI
   class NI < Generic
-    VERSION = "0.1.0"
+    VERSION = "0.1.1"
   end
 
   # might as well put this here

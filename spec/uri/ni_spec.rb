@@ -47,7 +47,7 @@ RSpec.describe URI::NI do
 
   # `digest` without arguments should return the binary digest
 
-  # `digest` with an incorrect radix should complain
+  # `digest` with an unsupported radix should complain
 
   # `hexdigest` should do what it says on the tin
 
@@ -59,13 +59,21 @@ RSpec.describe URI::NI do
 
   # `b64digest` should do what it says on the tin
 
-  # `b64digest` with alt: true should be URL-safe
+  # `b64digest` with alt: true should be *NOT* URL-safe
 
-  # `digest=` should complain if passed a string that isn't base64
-
-  # `digest=` should accept a Digest::Instance as an argument
+  # `set_digest` should accept a Digest::Instance as an argument
 
   # said Digest:Instance should also update the URI's algorithm
+
+  # `set_digest` should accept a radix
+
+  # `set_digest` with an unsupported radix should complain
+
+  # `set_digest` should return the original value if present
+
+  # `set_digest` should return the original value with the same radix
+
+  # `digest=` should behave the same as `set_digest` with radix: 256
 
   # `to_www` should return a URI::HTTPS representation
 

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 require 'uri/ni/version'
 require 'uri'
 require 'uri/generic'
@@ -79,6 +80,65 @@ class URI::NI < URI::Generic
     m.captures
   end
 
+  def assert_radix radix
+    raise ArgumentError,
+      "Radix must be 16, 32, 64, or 256, not #{radix.inspect}" unless
+      [256, 64, 32, 16].include? radix
+    radix
+  end
+
+  # assertions about data representation
+  ASSERT = {
+    256 => [/.*/, ''],
+    64  => [/^[0-9A-Za-z+\/_-]*=*$/, 'Data %s is not in base64'],
+    32  => [/^[2-7A-Za-z]*=*$/, 'Data %s is not in base32'],
+    16  => [/^[0-9A-Fa-f]*$/, 'Data %s is not in hexadecimal'],
+  }
+
+  def assert_repr data, radix
+    re, error = ASSERT[radix]
+    raise ArgumentError, error % data unless re.match data
+  end
+
+  # from whatever to binary
+  DECODE = {
+    256 => -> x { x },
+    64  => -> x { Base64.decode64 x.tr('-_', '+/') },
+    32  => -> x { require 'base32'; Base32.decode x },
+    16  => -> x { [x].pack 'H*' },
+  }
+
+  # from binary to whatever
+  ENCODE = {
+    256 => -> x { x },
+    64  => -> x { Base64.urlsafe_encode64(x).tr '=', '' },
+    32  => -> x { require 'base32'; Base32.encode(x).tr '=', '' },
+    16  => -> x { x.unpack1 'H*' },
+  }
+
+  # canonical and alternative representations
+  CANON = {
+    256 => -> x { x },
+    64  => -> x { x.tr('=', '').tr '+/', '-_' },
+    32  => -> x { x.tr('=', '').upcase },
+    16  => -> x { x.downcase },
+  }
+
+  # note if we put the padding here then we sanitize input as well
+
+  ALT = {
+    256 => -> x { x },
+    64  => -> x { x.tr('=', '').tr '-_', '+/' },
+    32  => -> x { x.tr('=', '').downcase },
+    16  => -> x { x.upcase },
+  }
+
+  def transcode data, from: 256, to: 256, alt: false
+    assert_repr data, from
+    data = ENCODE[to].call(DECODE[from].call data) unless from == to
+    alt ? ALT[to].call(data) : CANON[to].call(data)
+  end
+
   protected
 
   # holy crap you can override these?
@@ -128,7 +188,7 @@ class URI::NI < URI::Generic
       # make sure we're all on the same page hurr
       self.algorithm = algorithm ||= self.algorithm
       raise URI::InvalidComponentError,
-        "#{algorithm} is not a supported digest algorithm." unless
+        "Can't resolve a Digest context for the algorithm #{algorithm}." unless
         ctx = DIGESTS[algorithm]
       ctx = ctx.new
     end
@@ -157,8 +217,7 @@ class URI::NI < URI::Generic
     end
 
     self.set_path("/#{algorithm};" +
-      ctx.base64digest.gsub(/[+\/]/, ?+ => ?-, ?/ => ?_).gsub(/=/, ''))
-
+      ctx.base64digest.tr('+/', '-_').tr('=', ''))
     self
   end
 
@@ -184,7 +243,7 @@ class URI::NI < URI::Generic
   def algorithm= algo
     a, b = assert_path
     self.path   = "/#{algo}"
-    self.digest = b if b
+    self.set_digest(b, radix: 64) if b
     a.to_sym if a
   end
 
@@ -223,46 +282,51 @@ class URI::NI < URI::Generic
   # @return [String] The digest of the URI in the given representation
   #
   def digest radix: 256, alt: false
-    case radix
-    when 256
-      # XXX do not use urlsafe_decode64; it will complain if the
-      # thingies aren't aligned
-      Base64.decode64(raw_digest.tr('-_', '+/'))
-    when 64
-      b64digest alt: alt
-    when 32
-      b32digest alt: alt
-    when 16
-      hexdigest alt: alt
-    else
-      raise ArgumentError, "Radix must be 16, 32, 64, 256, not #{radix}"
-    end
+    assert_radix radix
+    transcode raw_digest, from: 64, to: radix, alt: alt
   end
 
-  # Set the digest to the data. Data may either be a
-  # +Digest::Instance+ or a base64 string. String representations will
-  # be normalized to {https://tools.ietf.org/html/rfc3548#section-4
-  # RFC 3548} base64url, i.e. +\+/+ will be replaced with +-_+ and
-  # padding (+=+) will be removed. +Digest::Instance+ objects will
+  # Set the digest to the data, with an optional radix. Data may
+  # either be a +Digest::Instance+—in which case the radix is
+  # ignored–a string, or +nil+. +Digest::Instance+ objects will
   # just be run through #compute, with all that entails.
-  def digest= data
-    a = assert_path.first
-    case data
+  #
+  # @param value [String, nil, Digest::Instance] The new digest
+  # @param radix [256, 64, 32, 16] The radix of the encoding (default 256)
+  # @return [String] The _old_ digest in the given radix
+  #
+  def set_digest value, radix: 256
+    assert_radix radix
+
+    a, d = assert_path
+
+    case value
     when Digest::Instance
-      compute data
+      compute value
     when String
-      raise ArgumentError, "Data #{data} is not in base64" unless
-        /^[0-9A-Za-z+\/_-]*=*$/.match(data)
-      data = data.tr('+/', '-_').tr('=', '')
-      self.path = a ? "/#{a};#{data}" : "/;#{data}"
+      value = transcode value, from: radix, to: 64
+      self.path = a ? "/#{a};#{value}" : "/;#{value}"
     when nil
       self.path = a ? "/#{a}" : ?/
     else
       raise ArgumentError,
-        "Data must be a string or Digest::Instance, not #{data.class}"
+        "Value must be a string or Digest::Instance, not #{value.class}"
     end
 
-    data
+    # bail out if nil
+    return unless d
+    transcode d, from: 64, to: radix
+  end
+
+  # Set the digest to the data. Data may either be a
+  # +Digest::Instance+ or a _binary_ string. +Digest::Instance+
+  # objects will just be run through #compute, with all that entails.
+  #
+  # @param value [String, nil, Digest::Instance] the new digest
+  # @return [String, nil, Digest::Instance] the value passed in
+  #
+  def digest= value
+    return set_digest value
   end
 
   # Return the digest in its hexadecimal notation. Optionally give
@@ -273,44 +337,59 @@ class URI::NI < URI::Generic
   # @return [String] The hexadecimal digest
   #
   def hexdigest alt: false
-    str = digest.unpack('H*').first
-    return str.upcase if alt
-    str
+    transcode raw_digest, from: 64, to: 16, alt: alt
+  end
+
+  # Set the digest value, assuming a hexadecimal input.
+  # @param value [String, nil, Digest::Instance] the new digest
+  # @return [String, nil, Digest::Instance] the value passed in
+  def hexdigest= value
+    set_digest value, radix: 16
   end
 
   # Return the digest in its base32 notation. Optionally give
   # +alt:+ a truthy value to return an alternate (lowercase)
-  # representation. Note this method requires
+  # representation. Note this method requires the base32 module.
   #
   # @param alt [false, true] Return the alternative representation
   # @return [String] The base32 digest
   #
   def b32digest alt: false
-    require 'base32'
-    ret = Base32.encode(digest).gsub(/=+/, '')
-    return ret.downcase if alt
-    ret.upcase
+    transcode raw_digest, from: 64, to: 32, alt: alt
   end
 
-  # Return the digest in its base64 notation. Optionally give
-  # +alt:+ a truthy value to return an alternate (URL-safe)
-  # representation.
+  # Set the digest value, assuming a base32 input (requires base32).
+  # @param value [String, nil, Digest::Instance] the new digest
+  # @return [String, nil, Digest::Instance] the value passed in
+  def b32digest= value
+    set_digest value, radix: 32
+  end
+
+  # Return the digest in its base64 notation. Note it is the
+  # _default_ representation that is URL-safe, for parity with the
+  # identifier itself. Give +alt:+ a truthy value to return a plain
+  # (_non_-URL-safe) base64 representation.
   #
   # @param alt [false, true] Return the alternative representation
   # @return [String] The base64 digest
   #
   def b64digest alt: false
-    ret = raw_digest
-    return ret.gsub(/[-_]/, ?- => ?+, ?_ => ?/) unless alt
-    ret
+    transcode raw_digest, from: 64, to: 64, alt: alt
+  end
+
+  # Set the digest value, assuming a base64 input.
+  # @param value [String, nil, Digest::Instance] the new digest
+  # @return [String, nil, Digest::Instance] the value passed in
+  def b64digest= value
+    set_digest value, radix: 64
   end
 
   # Returns a +/.well-known/...+, either HTTPS or HTTP URL, given the
   # contents of the +ni:+ URI.
   #
   # @param authority [#to_s, URI] Override the authority part of the URI
-  # @param https [true, false] whether the URL is to be HTTPS.
-  # @return [URI::HTTPS, URI::HTTP]
+  # @param https [true, false] Whether the URL is to be HTTPS.
+  # @return [URI::HTTPS, URI::HTTP] The generated URL.
   #
   def to_www https: true, authority: nil
     a, d = assert_path
