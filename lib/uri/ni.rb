@@ -127,7 +127,7 @@ class URI::NI < URI::Generic
     else
       # make sure we're all on the same page hurr
       self.algorithm = algorithm ||= self.algorithm
-      raise ArgumentError,
+      raise URI::InvalidComponentError,
         "#{algorithm} is not a supported digest algorithm." unless
         ctx = DIGESTS[algorithm]
       ctx = ctx.new
@@ -327,13 +327,13 @@ class URI::NI < URI::Generic
     if authority
       uhp = []
       if authority.is_a? URI
-        raise ArgumentError, "Bad authority #{authority}" unless
+        raise URI::InvalidComponentError, "Bad authority #{authority}" unless
           %i[userinfo host port].all? {|c| authority.respond_to? c }
         uhp = [authority.userinfo, authority.host, authority.port]
         uhp[2] = nil if authority.port == authority.class::DEFAULT_PORT
       else
         authority = authority.to_s
-        uhp = AUTH_RE.match(authority) or raise ArgumentError,
+        uhp = AUTH_RE.match(authority) or raise URI::InvalidComponentError,
           "Invalid authority #{authority}"
         uhp = uhp.captures
       end

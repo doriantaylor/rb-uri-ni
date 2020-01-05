@@ -48,7 +48,7 @@ result and compute a new digest with it:
 ni
 # => #<URI::NI ni:///lol;wut>
 ni.compute 'derp'
-ArgumentError: lol is not a supported digest algorithm.
+# ArgumentError: lol is not a supported digest algorithm.
 ```
 
 Similarly, the digest component of the URI can be anything going in to
@@ -56,11 +56,11 @@ the parser, but only base64 is valid for subsequent manipulation:
 
 ```
 ni.digest = '$#!%$%'
-ArgumentError: Data $#!%$% is not in base64
+# ArgumentError: Data $#!%$% is not in base64
 ```
 
 In addition to computing new digest URIs, this module will return the
-interesting part of its contents in binary, base64, hexadecimal, and
+interesting part of its contents in binary, hexadecimal, base64, and
 (with a soft dependency), [base32](https://rubygems.org/gems/base32).
 
 Finally, this module will also reuse any extant `Digest::Instance`
