@@ -8,6 +8,8 @@ RSpec.describe URI::NI do
     expect(uri).to be_a(URI::NI)
   end
 
+  # look i will write these tests when i god damn feel like it okay
+
   # ok we wanna test it parsing whatever (robustness principle)
 
   # though it should complain if you parse garbage and then try to do

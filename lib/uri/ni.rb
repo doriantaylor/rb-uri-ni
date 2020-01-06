@@ -161,8 +161,17 @@ class URI::NI < URI::Generic
   public
 
   # Compute an RFC6920 URI from a data source.
+  #
   # @param data [#to_s, IO, Digest, nil]
-  # @param algorithm [Symbol] See algorithms
+  # @param algorithm [Symbol] See available algorithms. Default: +:"sha-256"+
+  # @param blocksize [Integer] The number or bytes per call to the Digest
+  # @param authority [String, nil] Optional authority (user, host, port)
+  # @param query [String, nil] Optional query string
+  # @yield [ctx, buf] Passes the Digest and (maybe) the buffer
+  # @yieldparam ctx [Digest::Instance] The digest instance to the block
+  # @yieldparam buf [String, nil] The current read buffer (if +data+ is set)
+  # 
+  # @return [URI::NI] 
   def self.compute data = nil, algorithm: :"sha-256", blocksize: 65536,
       authority: nil, query: nil, &block
 
@@ -170,6 +179,9 @@ class URI::NI < URI::Generic
       blocksize: blocksize, authority: authority, query: query, &block
   end
 
+  
+  # (Re)-compute a digest using existing information from an instance.
+  # @see .compute
   def compute data = nil, algorithm: nil, blocksize: 65536,
       authority: nil, query: nil, &block
 
@@ -186,7 +198,7 @@ class URI::NI < URI::Generic
       data = nil # unset data
     else
       # make sure we're all on the same page hurr
-      self.algorithm = algorithm ||= self.algorithm
+      self.algorithm = algorithm ||= self.algorithm || :"sha-256"
       raise URI::InvalidComponentError,
         "Can't resolve a Digest context for the algorithm #{algorithm}." unless
         ctx = DIGESTS[algorithm]
@@ -288,7 +300,7 @@ class URI::NI < URI::Generic
 
   # Set the digest to the data, with an optional radix. Data may
   # either be a +Digest::Instance+—in which case the radix is
-  # ignored–a string, or +nil+. +Digest::Instance+ objects will
+  # ignored—a string, or +nil+. +Digest::Instance+ objects will
   # just be run through #compute, with all that entails.
   #
   # @param value [String, nil, Digest::Instance] The new digest

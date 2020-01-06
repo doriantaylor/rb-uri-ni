@@ -28,6 +28,7 @@ Gem::Specification.new do |spec|
 
   # dev/test dependencies
   spec.add_development_dependency 'bundler', '~> 2'
+  spec.add_development_dependency 'base32',  '~> 0.3'
   # bundler put these in the gemfile i dunno wtf
   #spec.add_development_dependency 'rake',    '~> 12.0'
   #spec.add_development_dependency 'rspec',   '~> 3.0'
