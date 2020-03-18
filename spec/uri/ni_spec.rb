@@ -10,6 +10,8 @@ RSpec.describe URI::NI do
 
   # look i will write these tests when i god damn feel like it okay
 
+  # or hey even better, how about *you* write em
+
   # ok we wanna test it parsing whatever (robustness principle)
 
   # though it should complain if you parse garbage and then try to do

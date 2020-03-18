@@ -170,6 +170,7 @@ class URI::NI < URI::Generic
   # @yield [ctx, buf] Passes the Digest and (maybe) the buffer
   # @yieldparam ctx [Digest::Instance] The digest instance to the block
   # @yieldparam buf [String, nil] The current read buffer (if +data+ is set)
+  # @yieldreturn [nil] The result of the block is ignored
   # 
   # @return [URI::NI] 
   def self.compute data = nil, algorithm: :"sha-256", blocksize: 65536,
@@ -179,6 +180,18 @@ class URI::NI < URI::Generic
       blocksize: blocksize, authority: authority, query: query, &block
   end
 
+  # Return a Digest::Instance for a supported algorithm.
+  # @param  [#to_s, #to_sym]  The algorithm
+  # @return [Digest:Instance] The digest context
+  # @raise  [ArgumentError] if the algorithm is unrecognized
+  def self.context algorithm
+    raise ArgumentError, "Cannot coerce #{algorithm} to a symbol" unless
+      algorithm.respond_to? :to_s # cheat: symbols respond to to_s
+    algorithm = algorithm.to_s.to_sym unless algorithm.is_a? Symbol
+    raise ArgumentError, "Unsupported digest algorithm #{algorithm}" unless
+      ctx = DIGESTS[algorithm]
+    ctx.new
+  end
   
   # (Re)-compute a digest using existing information from an instance.
   # @see .compute
@@ -462,4 +475,16 @@ class URI::NI < URI::Generic
     to_www https: false, authority: authority
   end
 
+  # Returns the set of supported algorithms.
+  # @return [Array] the algorithms
+  def self.algorithms
+    DIGESTS.keys
+  end
+
+  # Returns true if the algorithm is supported.
+  # @param algorithm [Symbol,String] the algorithm identifier to test
+  # @return [true, false] whether it is supported
+  def self.valid_algo? algorithm
+    DIGESTS.has_key? algorithm.to_s.downcase.to_sym
+  end
 end
