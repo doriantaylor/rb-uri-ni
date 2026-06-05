@@ -44,6 +44,8 @@ class URI::NI < URI::Generic
     "sha-512": Digest::SHA512,
   }
 
+  LENGTHS = DIGESTS.transform_values { |v| v.new.digest_length }
+
   # resolve first against digest length and then class
   DIGEST_REV = {
     64 => { Digest::SHA512 => :"sha-512", Digest::SHA2   => :"sha-512" },
@@ -95,10 +97,13 @@ class URI::NI < URI::Generic
     16  => [/^[0-9A-Fa-f]*$/, 'Data %s is not in hexadecimal'],
   }
 
-  def assert_repr data, radix
+  ASSERT_REPR = -> data, radix do
     re, error = ASSERT[radix]
-    raise ArgumentError, error % data unless re.match data
+    raise ArgumentError, error % data unless re.match? data
   end
+
+  define_method :assert_repr, &ASSERT_REPR
+  define_singleton_method :assert_repr, &ASSERT_REPR
 
   # from whatever to binary
   DECODE = {
@@ -133,11 +138,14 @@ class URI::NI < URI::Generic
     16  => -> x { x.upcase },
   }
 
-  def transcode data, from: 256, to: 256, alt: false
+  TRANSCODE = -> data, from: 256, to: 256, alt: false do
     assert_repr data, from
     data = ENCODE[to].call(DECODE[from].call data) unless from == to
     alt ? ALT[to].call(data) : CANON[to].call(data)
   end
+
+  define_method :transcode, &TRANSCODE
+  define_singleton_method :transcode, &TRANSCODE
 
   protected
 
@@ -160,6 +168,53 @@ class URI::NI < URI::Generic
 
   public
 
+  # Transform a digest for a known algorithm into a {URI::NI}. Takes a
+  # binary, Base64, Base32, or hexadecimal string.
+  #
+  # @param algorithm [Symbol,#to_sym] a supported algorithm
+  # @param digest [String, #to_s, Digest::Instance] the digest (or context)
+  #
+  # @raise [ArgumentError] if the algorithm is unsupported
+  # @raise [ArgumentError] if the input string is not the right length
+  #  for the algorithm
+  # @raise [ArgumentError] if the input string is incorrectly encoded
+  #
+  # @return [URI::NI] the transformed identifier
+  #
+  def self.ingest algorithm = nil, digest
+    return compute(digest) if digest.is_a? Digest::Instance
+    return digest if digest.is_a? URI::NI # noop
+
+    # make sure we're indeed dealing with a string
+    digest = digest.to_s
+
+    # just parse if it's already a ni: URI string
+    return URI(digest) if /^ni:/i.match? digest
+
+    # get the expected length of the digest for the algorithm
+    len = LENGTHS[algorithm.to_s.downcase.to_sym] or raise ArgumentError,
+      "unsupported algorithm #{algorithm}"
+
+    # the length of the string is used to determine the expected encoding
+    radix = case digest.length
+            when len then 256
+            when -> x { x >= (len * 8 / 6.0).ceil && x < (len * 8 / 5.0).ceil }
+              # note that a length longer than base64 but shorter than base32
+              # can be assumed to be base64 with padding
+              64
+            when (len * 8 / 5.0).ceil then 32
+            when len * 2 then 16
+            else
+              raise ArgumentError, "invalid string length: #{digest.length}"
+            end
+
+    # then we lint it to see if it's correct
+    digest = transcode digest, from: radix, to: 64
+
+    # then we transcode
+    URI("ni:///#{algorithm};#{digest}")
+  end
+
   # Compute an RFC6920 URI from a data source.
   #
   # @param data [#to_s, IO, Digest, nil]
@@ -171,8 +226,8 @@ class URI::NI < URI::Generic
   # @yieldparam ctx [Digest::Instance] The digest instance to the block
   # @yieldparam buf [String, nil] The current read buffer (if +data+ is set)
   # @yieldreturn [nil] The result of the block is ignored
-  # 
-  # @return [URI::NI] 
+  #
+  # @return [URI::NI]
   def self.compute data = nil, algorithm: :"sha-256", blocksize: 65536,
       authority: nil, query: nil, &block
 
@@ -192,7 +247,7 @@ class URI::NI < URI::Generic
       ctx = DIGESTS[algorithm]
     ctx.new
   end
-  
+
   # (Re)-compute a digest using existing information from an instance.
   # @see .compute
   def compute data = nil, algorithm: nil, blocksize: 65536,

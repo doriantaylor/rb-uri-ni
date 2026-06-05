@@ -3,9 +3,13 @@ require 'uri/generic'
 
 module URI
   class NI < Generic
-    VERSION = "0.1.4"
+    VERSION = "0.2.0"
   end
 
   # might as well put this here
-  @@schemes['NI'] = NI
+  if self.respond_to? :register_scheme
+    register_scheme 'NI', NI
+  else
+    @@schemes['NI'] = NI
+  end
 end
