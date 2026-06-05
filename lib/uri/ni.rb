@@ -58,7 +58,9 @@ class URI::NI < URI::Generic
     end
 
     [k, v]
-  end.to_h
+  end.to_h.freeze
+
+  TRUNCATED = [32, 64, 96, 120, 128].map { |i| "sha-256-#{i}".to_sym }.freeze
 
   # resolve first against digest length and then class
   DIGEST_REV = {
@@ -322,6 +324,14 @@ class URI::NI < URI::Generic
   #
   def valid?
     LENGTHS[algorithm] and LENGTHS[algorithm] == digest.length
+  end
+
+  # Returns true if the algorithm is a truncated one.
+  #
+  # @return [false, true]
+  #
+  def truncated?
+    TRUNCATED.include? algorithm
   end
 
   # Display the available algorithms.
