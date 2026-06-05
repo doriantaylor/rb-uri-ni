@@ -198,14 +198,29 @@ class URI::NI < URI::Generic
   # @return [URI::NI] the transformed identifier
   #
   def self.ingest algorithm = nil, digest
-    return compute(digest) if digest.is_a? Digest::Instance
-    return digest if digest.is_a? URI::NI # noop
+    if digest.is_a? Digest::Instance
+      # this will complain
+      algo_for digest, algorithm
+      return compute(digest)
+    elsif digest.is_a? URI::NI
+      raise ArgumentError,
+        "digest algorithm #{digest.algorithm} does not match #{algorithm}" if
+        algorithm && algorithm != digest.algorithm
+      return digest
+    end
 
     # make sure we're indeed dealing with a string
     digest = digest.to_s
 
     # just parse if it's already a ni: URI string
-    return URI(digest) if /^ni:/i.match? digest
+    if /^ni:/i.match? digest
+      digest = URI(digest)
+      raise ArgumentError,
+        "digest algorithm #{digest.algorithm} does not match #{algorithm}" if
+        algorithm && algorithm != digest.algorithm
+
+      return digest
+    end
 
     # get the expected length of the digest for the algorithm
     len = LENGTHS[algorithm.to_s.downcase.to_sym] or raise ArgumentError,
