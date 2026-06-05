@@ -42,9 +42,23 @@ class URI::NI < URI::Generic
     "sha-256": Digest::SHA256,
     "sha-384": Digest::SHA384,
     "sha-512": Digest::SHA512,
+    # XXX not sure if i want to do this
+    "sha-256-32": Digest::SHA256,
+    "sha-256-64": Digest::SHA256,
+    "sha-256-96": Digest::SHA256,
+    "sha-256-120": Digest::SHA256,
+    "sha-256-128": Digest::SHA256,
   }
 
-  LENGTHS = DIGESTS.transform_values { |v| v.new.digest_length }
+  LENGTHS = DIGESTS.map do |k, v|
+    v = if m = /^sha-256-(\d+)$/.match(k)
+      m.captures.first.to_i / 8
+    else
+      v.new.digest_length
+    end
+
+    [k, v]
+  end.to_h
 
   # resolve first against digest length and then class
   DIGEST_REV = {
@@ -261,7 +275,8 @@ class URI::NI < URI::Generic
     # special case for when the data is a digest
     ctx = nil
     if data.is_a? Digest::Instance
-      algorithm ||= algo_for data, algorithm
+      # note the self; this would have been a bug lol
+      self.algorithm = algorithm ||= algo_for data, algorithm
       ctx  = data
       data = nil # unset data
     else
@@ -296,17 +311,26 @@ class URI::NI < URI::Generic
       block.call ctx, nil
     end
 
-    self.set_path("/#{algorithm};" +
-      ctx.base64digest.tr('+/', '-_').tr('=', ''))
+    set_digest ctx.digest
+
     self
+  end
+
+  # Returns true if the digest length matches the algorithm.
+  #
+  # @return [false, true]
+  #
+  def valid?
+    LENGTHS[algorithm] and LENGTHS[algorithm] == digest.length
   end
 
   # Display the available algorithms.
   #
   # @return [Array] containing the symbols representing the available
   #  digest algorithms.
-  def self.algorithms
-    DIGESTS.keys.sort
+  def self.algorithms truncated: false
+    out = DIGESTS.keys.sort
+    truncated ? out : out.reject { |a| /^sha-256-/.match? a }
   end
 
   # Obtain the algorithm of the digest. May be nil.
@@ -384,7 +408,10 @@ class URI::NI < URI::Generic
     when Digest::Instance
       compute value
     when String
-      value = transcode value, from: radix, to: 64
+      value = transcode value, from: radix
+      value = value[0, LENGTHS[a.to_sym]] # deal with truncation
+      value = transcode value, to: 64
+
       self.path = a ? "/#{a};#{value}" : "/;#{value}"
     when nil
       self.path = a ? "/#{a}" : ?/
@@ -530,16 +557,17 @@ class URI::NI < URI::Generic
     to_www https: false, authority: authority
   end
 
-  # Returns the set of supported algorithms.
-  # @return [Array] the algorithms
-  def self.algorithms
-    DIGESTS.keys
-  end
 
   # Returns true if the algorithm is supported.
   # @param algorithm [Symbol,String] the algorithm identifier to test
   # @return [true, false] whether it is supported
   def self.valid_algo? algorithm
-    DIGESTS.has_key? algorithm.to_s.downcase.to_sym
+    algorithm = algorithm.to_s.downcase.to_sym
+
+    # special case for truncated sha-256
+    return true if /^(sha-256)-(32|64|96|120|128)$/.match? algorithm
+
+    # etc
+    DIGESTS.has_key? algorithm
   end
 end
