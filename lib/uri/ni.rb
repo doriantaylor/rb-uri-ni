@@ -338,14 +338,16 @@ class URI::NI < URI::Generic
   #
   # @return [Array] containing the symbols representing the available
   #  digest algorithms.
+  #
   def self.algorithms truncated: false
     out = DIGESTS.keys.sort
-    truncated ? out : out.reject { |a| /^sha-256-/.match? a }
+    truncated ? out : out - TRUNCATED
   end
 
   # Obtain the algorithm of the digest. May be nil.
   #
   # @return [Symbol, nil]
+  #
   def algorithm
     algo = assert_path.first
     return algo.to_sym if algo
@@ -353,7 +355,8 @@ class URI::NI < URI::Generic
 
   # Set the algorithm of the digest. Will croak if the path is malformed.
   #
-  # @return [Symbol, nil] the old algorithm
+  # @return [Symbol, nil]
+  #
   def algorithm= algo
     a, b = assert_path
     self.path   = "/#{algo}"
@@ -364,6 +367,7 @@ class URI::NI < URI::Generic
   # Obtain the authority (userinfo@host:port) if present.
   #
   # @return [String, nil] the authority
+  #
   def authority
     out = userinfo ? "#{userinfo}@#{host}" : host
     out += "#{out}:#{port}" if port
@@ -372,7 +376,8 @@ class URI::NI < URI::Generic
 
   # Set the authority of the URI.
   #
-  # @return [String, nil] the old authority
+  # @return [String, nil]
+  #
   def authority= authority
     old = self.authority
     u, h, p = assert_authority authority unless authority.nil?
@@ -393,6 +398,7 @@ class URI::NI < URI::Generic
   #
   # @param radix [256, 64, 32, 16] The radix of the representation
   # @param alt [false, true] Return the alternative representation
+  #
   # @return [String] The digest of the URI in the given representation
   #
   def digest radix: 256, alt: false
@@ -407,6 +413,7 @@ class URI::NI < URI::Generic
   #
   # @param value [String, nil, Digest::Instance] The new digest
   # @param radix [256, 64, 32, 16] The radix of the encoding (default 256)
+  #
   # @return [String] The _old_ digest in the given radix
   #
   def set_digest value, radix: 256
@@ -440,6 +447,7 @@ class URI::NI < URI::Generic
   # objects will just be run through #compute, with all that entails.
   #
   # @param value [String, nil, Digest::Instance] the new digest
+  #
   # @return [String, nil, Digest::Instance] the value passed in
   #
   def digest= value
@@ -451,6 +459,7 @@ class URI::NI < URI::Generic
   # representation.
   #
   # @param alt [false, true] Return the alternative representation
+  #
   # @return [String] The hexadecimal digest
   #
   def hexdigest alt: false
@@ -458,8 +467,11 @@ class URI::NI < URI::Generic
   end
 
   # Set the digest value, assuming a hexadecimal input.
+  #
   # @param value [String, nil, Digest::Instance] the new digest
+  #
   # @return [String, nil, Digest::Instance] the value passed in
+  #
   def hexdigest= value
     set_digest value, radix: 16
   end
@@ -469,6 +481,7 @@ class URI::NI < URI::Generic
   # representation. Note this method requires the base32 module.
   #
   # @param alt [false, true] Return the alternative representation
+  #
   # @return [String] The base32 digest
   #
   def b32digest alt: false
@@ -476,8 +489,11 @@ class URI::NI < URI::Generic
   end
 
   # Set the digest value, assuming a base32 input (requires base32).
+  #
   # @param value [String, nil, Digest::Instance] the new digest
+  #
   # @return [String, nil, Digest::Instance] the value passed in
+  #
   def b32digest= value
     set_digest value, radix: 32
   end
@@ -488,6 +504,7 @@ class URI::NI < URI::Generic
   # (_non_-URL-safe) base64 representation.
   #
   # @param alt [false, true] Return the alternative representation
+  #
   # @return [String] The base64 digest
   #
   def b64digest alt: false
@@ -495,8 +512,11 @@ class URI::NI < URI::Generic
   end
 
   # Set the digest value, assuming a base64 input.
+  #
   # @param value [String, nil, Digest::Instance] the new digest
+  #
   # @return [String, nil, Digest::Instance] the value passed in
+  #
   def b64digest= value
     set_digest value, radix: 64
   end
@@ -506,6 +526,7 @@ class URI::NI < URI::Generic
   #
   # @param authority [#to_s, URI] Override the authority part of the URI
   # @param https [true, false] Whether the URL is to be HTTPS.
+  #
   # @return [URI::HTTPS, URI::HTTP] The generated URL.
   #
   def to_www https: true, authority: nil
@@ -551,6 +572,7 @@ class URI::NI < URI::Generic
   # Unconditionally returns an HTTPS URL.
   #
   # @param authority [#to_s, URI] Override the authority part of the URI
+  #
   # @return [URI::HTTPS]
   #
   def to_https authority: nil
@@ -561,6 +583,7 @@ class URI::NI < URI::Generic
   # Unconditionally returns an HTTP URL.
   #
   # @param authority [#to_s, URI] Override the authority part of the URI
+  #
   # @return [URI::HTTP]
   #
   def to_http authority: nil
@@ -569,15 +592,20 @@ class URI::NI < URI::Generic
 
 
   # Returns true if the algorithm is supported.
+  #
   # @param algorithm [Symbol,String] the algorithm identifier to test
+  #
   # @return [true, false] whether it is supported
+  #
   def self.valid_algo? algorithm
-    algorithm = algorithm.to_s.downcase.to_sym
+    DIGESTS.has_key? algorithm.to_s.downcase.to_sym
+  end
 
-    # special case for truncated sha-256
-    return true if /^(sha-256)-(32|64|96|120|128)$/.match? algorithm
-
-    # etc
-    DIGESTS.has_key? algorithm
+  # Returns true if the supplied algorithm is a truncated one.
+  #
+  # @return [false, true]
+  #
+  def self.truncated? algorithm
+    valid_algo?(algorithm) && TRUNCATED.include?(algorithm.to_s.downcase.to_sym)
   end
 end
