@@ -212,7 +212,7 @@ class URI::NI < URI::Generic
       arg.is_a? URI::NI
 
     # return it
-    arg
+    arg.dup
   end
 
   public
