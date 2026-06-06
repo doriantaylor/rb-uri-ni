@@ -182,6 +182,39 @@ class URI::NI < URI::Generic
     @host = v.to_s
   end
 
+  # This will attempt to coerce the input into a {URI::NI} if it's possible.
+  #
+  # @param arg [#to_s, URI::Generic] something that might be a URI
+  #
+  # @raise [URI::Error] if the URI itself is malformed
+  # @raise [ArgumentError] if it is not a `ni:` URI or HTTP(S) with
+  #  the `/.well-known/ni/…` construct
+  #
+  # @return [nil, URI::NI] the hash URI (maybe)
+  #
+  def self.try_uri arg
+    unless arg.is_a? URI
+      arg = arg.to_s
+      return unless %r{^(?i:ni|https?)://}.match? arg
+      arg = URI(arg)
+    end
+
+    # normalize the uri
+    arg = arg.normalize
+
+    # if HTTP(S) URI with `/.well-known/ni/…`, convert it
+    if m = %r{^/+\.well-known/+ni/+([^/]+)/+([0-9A-Za-z_-]+)$}.match(arg.path)
+      arg = URI('ni:///%s;%s' % m.captures)
+    end
+
+    raise ArgumentError,
+      "don't know what to do with a #{arg.scheme}: URI" unless
+      arg.is_a? URI::NI
+
+    # return it
+    arg
+  end
+
   public
 
   # Transform a digest for a known algorithm into a {URI::NI}. Takes a
@@ -202,25 +235,15 @@ class URI::NI < URI::Generic
       # this will complain
       algo_for digest, algorithm
       return compute(digest)
-    elsif digest.is_a? URI::NI
+    elsif tmp = try_uri(digest)
       raise ArgumentError,
-        "digest algorithm #{digest.algorithm} does not match #{algorithm}" if
-        algorithm && algorithm != digest.algorithm
-      return digest
+        "digest algorithm #{tmp.algorithm} does not match #{algorithm}" if
+        algorithm && algorithm != tmp.algorithm
+      return tmp
     end
 
-    # make sure we're indeed dealing with a string
+    # okay now we should have a string that's just the hash
     digest = digest.to_s
-
-    # just parse if it's already a ni: URI string
-    if /^ni:/i.match? digest
-      digest = URI(digest)
-      raise ArgumentError,
-        "digest algorithm #{digest.algorithm} does not match #{algorithm}" if
-        algorithm && algorithm != digest.algorithm
-
-      return digest
-    end
 
     # get the expected length of the digest for the algorithm
     len = LENGTHS[algorithm.to_s.downcase.to_sym] or raise ArgumentError,
