@@ -289,7 +289,7 @@ class URI::NI < URI::Generic
       blocksize: blocksize, authority: authority, query: query, &block
   end
 
-  # Return a Digest::Instance for a supported algorithm.
+  # Return a {Digest::Instance}  for a supported algorithm.
   # @param  [#to_s, #to_sym]  The algorithm
   # @return [Digest:Instance] The digest context
   # @raise  [ArgumentError] if the algorithm is unrecognized
@@ -400,6 +400,12 @@ class URI::NI < URI::Generic
     self.path   = "/#{algo}"
     self.set_digest(b, radix: 64) if b
     a.to_sym if a
+  end
+
+  # Return a `Hash` mapping algorithms to their lengths
+  #
+  def self.lengths truncated: false
+    LENGTHS.slice *algorithms(truncated: truncated)
   end
 
   # Obtain the authority (userinfo@host:port) if present.
